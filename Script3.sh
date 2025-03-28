@@ -8,7 +8,8 @@ RESULT=""
 read -p "Podaj tekst do sprawdzenia: " USER_INPUT
 
 for WORD in $USER_INPUT; do
-    IS_FOUND=$(grep -i -x "$WORD" /usr/share/dict/words)
+    CLEANED_WORD=$(echo $WORD | tr -d '[:punct:]')
+    IS_FOUND=$(grep -i -x "$CLEANED_WORD" $FILE_PATH)
     if [ -z "${IS_FOUND}" ]; then
         RESULT+=$(echo -e "\e[1;31m${WORD}\e[0m") 
     else
@@ -17,6 +18,6 @@ for WORD in $USER_INPUT; do
     RESULT+=" "
 done
 
-echo $RESULT
+echo -e "$RESULT"
 
 # echo $USER_INPUT
