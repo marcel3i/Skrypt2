@@ -1,0 +1,2 @@
+gcc perf_power.c -O2 -o perf_power
+sudo ./perf_power
