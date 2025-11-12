@@ -1,0 +1,228 @@
+.686
+.model flat
+extern __write : PROC , __read : PROC
+extern _ExitProcess@4 : PROC
+extern _MessageBoxW@16 : PROC
+
+public _main
+
+; obszar danych programu
+.data
+    ; deklaracja tablicy 12-bajtowej do przechowywania
+    ; tworzonych cyfr
+    znaki db 12 dup (?)
+
+    ; deklaracja tablicy do przechowywania wprowadzanych cyfr z klawiatury
+    obszar   db 12 dup (?)
+    siedemnascie dd 17            ; mno¿nik, bo mul mno¿y wartoœæ rejestru EAX (czyli 4 bajtowy)
+
+    dekoder db '0123456789ABCDEFGHIJKL' ; u¿ywany do odczytania 4 bitów jako kod z HEX
+
+    czy_ujemna db 0
+
+    tytul_UTF16 dw 'E','A','X','-','1','7', 0  ; Znak NULL na koñcu
+    magazyn_UTF16    dw 26 dup (?)   ; Bufor na 12 znaków w UTF-16
+
+; obszar instrukcji (rozkazów) programu
+.code
+
+
+; Pocedura zamieniaj¹ca liczbê o podstawiê 10 z rejestru EAX do podstawy wskazanej przez parametr na stosie 
+; liczbê tê "konwertujemy" wypisuj¹c odpowiedni ci¹g znaków na ekran (konsola + MessageBoxW)
+wyswietl_EAX_U2_b17 PROC
+    push    ebp         ; zachowaj oryginalny ebp
+    mov     ebp, esp    ; zachowaj oryginalny œlad
+    pusha               ; zachowaj wartoœci rejestrów
+
+    BT      eax, 31     ; sprawdz czy ujemna
+    jnc konwertuj_liczbe
+    ; ujemna, wiêc negujemy i zapisujemy flage
+    neg EAX
+    mov BYTE PTR czy_ujemna, 1
+    konwertuj_liczbe:
+    
+
+    mov     esi, 10         ; indeks w tablicy 'znaki'
+    mov     ebx, [ebp+8]         ; dzielnik równy podstawie systemu
+
+    mov     edi, 20         ; indeks w magazynie UTF-16, 20-21 ostatnia cyfra, 
+                            ; 22-23 znak newLine, 24-25 null Terminator
+    konwersja:
+    mov     edx, 0          ; zerowanie starszej czêœci dzielnej
+    div     ebx             ; dzielenie przez podstawe systemu, reszta w EDX,
+                            ; iloraz w EAX
+    mov     bl, dekoder[edx]         ; zamiana reszty z dzielenia na znak w systemie 17, 
+                                     ; u¿ywamy bl a póŸniej przywracamy wartoœæ ebx
+    movzx   cx, bl         ; dodanie zer na pocz¹tku, aby pasowa³o do UTF-16
+
+
+    mov     znaki[esi], bl  ; zapisanie cyfry w kodzie ASCII
+    mov     magazyn_UTF16[edi], cx  ; zaspisanie cyfry w kodzie UTF-16
+
+    mov     ebx, [ebp+8]    ; przywrócenie ebx
+    dec     esi             ; zmniejszenie indeksu
+    sub     edi, 2
+    cmp     eax, 0          ; sprawdzenie czy iloraz = 0
+    jne     konwersja       ; skok, gdy iloraz niezerowy
+
+; wype³nienie pozosta³ych bajtów spacjami i wpisanie
+; znaków nowego wiersza
+ cmp [czy_ujemna], 0
+    je nie_dodawaj_minusa
+    mov     byte PTR znaki[esi], '-' ; dodaj minusa przed liczba 
+    mov     WORD PTR magazyn_UTF16[edi], '-'  ; dodaj minusa przed liczba
+    dec     esi             ; zmniejszenie indeksu konsola 
+    sub     edi, 2          ; zmniejszenie indeksu UTF-16
+
+    nie_dodawaj_minusa:
+
+wypeln:
+    or      esi, esi
+    jz      wyswietl        ; skok, gdy ESI = 0
+
+    mov     byte PTR znaki[esi], 20H ; kod spacji, zapis do konsoli
+
+    mov     WORD PTR magazyn_UTF16[edi], 20H ; kod spacji, zapis do msboxW
+
+    dec     esi             ; zmniejszenie indeksu konsola 
+    sub     edi, 2          ; zmniejszenie indeksu UTF-16
+    jmp     wypeln
+
+wyswietl:
+    mov     byte PTR znaki[0], 0AH   ; kod nowego wiersza
+    mov     byte PTR znaki[11], 0AH  ; kod nowego wiersza
+
+    mov     WORD PTR magazyn_UTF16[0], 0AH   ; kod nowego wiersza
+    mov     WORD PTR magazyn_UTF16[22], 0AH  ; kod nowego wiersza
+    mov     WORD PTR magazyn_UTF16[24], 0   ; null terminator
+
+  ; wyœwietlenie cyfr na ekranie
+    push    dword PTR 12            ; liczba wyœwietlanych znaków
+    push    dword PTR OFFSET znaki  ; adres wyœw. obszaru
+    push    dword PTR 1             ; numer urz¹dzenia (ekran ma numer 1)
+    call    __write                 ; wyœwietlenie liczby na ekranie
+    add     esp, 12                 ; usuniêcie parametrów ze stosu
+
+  ; --- Wywo³anie okna dialogowego w wersji Unicode (dla UTF-16) ---
+    push    0                           ; Argument 4: Typ okna (0 = MB_OK)
+    push    OFFSET tytul_UTF16        ; Argument 3: Adres tekstu tytu³u (OFFSET s³u¿y do wskazaniu adresu)
+    push    OFFSET magazyn_UTF16       ; Argument 2: Adres tekstu wiadomoœci
+    push    0                           ; Argument 1: Uchwyt okna (0 = NULL)
+    call    _MessageBoxW@16             ; Wywo³aj funkcjê MessageBoxW (wersja 'W' od Wide)
+
+    popa   
+    pop     ebp
+    ret     4   ; 4 bo usuwamy 4 bajty [jeden push na system kodowania]
+wyswietl_EAX_U2_b17 ENDP
+
+; u¿ytkwowik wpisuje liczbê w dowolnym systemie przekazanym przez stos, 
+; wykonuje siê konwersja na poprawn¹ wartoœæ dziesiêtn¹ (binarn¹)
+wczytaj_EAX_U2_b17 PROC
+    push    ebp         ; zachowaj oryginalny ebp
+    mov     ebp, esp    ; zachowaj oryginalny œlad
+    ; Zapisanie rejestrów, które bêd¹ u¿ywane w podprogramie (EAX nie, poniewa¿ w nim przechowowujemy wynik)
+    push ebx
+    push ecx 
+    push edx
+
+    push    dword PTR 12            ; max iloœæ znaków wczytywanej liczby
+    push    dword PTR OFFSET obszar ; adres obszaru pamiêci
+    push    dword PTR 0             ; numer urz¹dzenia (0 dla klawiatury)
+    call    __read                  ; odczytywanie znaków z klawiatury
+                                    ; (dwa znaki podkreœlenia przed read)
+    add     esp, 12                 ; usuniêcie parametrów ze stosu
+    
+; bie¿¹ca wartoœæ przekszta³canej liczby przechowywana jest
+; w rejestrze EAX; przyjmujemy 0 jako wartoœæ pocz¹tkow¹
+    mov     eax, 0
+    mov     ebx, OFFSET obszar      ; adres obszaru ze znakami
+
+pobieraj_znaki:
+    mov     cl, [ebx]               ; pobranie kolejnej cyfry w kodzie
+                                    ; ASCII
+    inc     ebx                     ; zwiêkszenie indeksu
+    cmp     cl, '-'
+    je dodaj_znak_minus
+    cmp     cl, '+'
+    je dodaj_znak_plus
+    cmp     cl, 10                  ; sprawdzenie czy naciœniêto Enter
+    je      byl_enter               ; skok, gdy naciœniêto Enter
+    cmp     cl, 'A'
+    jb      konwertuj_cyfry
+    cmp     cl, 'a'
+    jb      konwertuj_duze_znaki
+
+    jmp     konwertuj_male_znaki
+
+dodaj_znak_minus:
+   mov     [czy_ujemna], BYTE PTR 1
+   jmp pobieraj_znaki
+
+dodaj_znak_plus:
+   mov     [czy_ujemna], BYTE PTR 0 
+   jmp pobieraj_znaki
+
+konwertuj_cyfry:
+      sub     cl, 30H                 ; zamiana kodu cyfr ASCII na wartoœæ cyfry
+      jmp zapisz_znak
+
+konwertuj_duze_znaki:                
+      sub     cl, 41H
+      add     cl, 10
+      jmp zapisz_znak
+
+konwertuj_male_znaki:
+      sub     cl, 61H
+      add     cl, 10
+      jmp zapisz_znak
+   
+    
+; mno¿enie wczeœniej obliczonej wartoœci
+zapisz_znak:
+    movzx   ecx, cl                 ; przechowanie wartoœci cyfry w
+                                    ; rejestrze ECX
+    mul     dword PTR [ebp + 8]     ; pomno¿enie przez system na który konwertujemy
+    add     eax, ecx                ; dodanie ostatnio odczytanej cyfry
+    jmp     pobieraj_znaki          ; skok na pocz¹tek pêtli
+
+byl_enter:
+; wartoœæ binarna wprowadzonej liczby znajduje siê teraz w rejestrze EAX
+    ; odtworzenie rejestrów w odwrotnej kolejnoœci 
+    cmp [czy_ujemna], 0
+    je zakoncz_procedure
+    NEG eax
+    zakoncz_procedure:
+    pop edx
+    pop ecx
+    pop ebx
+
+    pop ebp
+  
+    ret 4   ; bo usuwamy jeden parametr przekazany do funkcji
+wczytaj_EAX_U2_b17 ENDP
+
+_main PROC
+
+
+    mov EAX, 288
+    sub  esp, 4
+    mov  DWORD PTR [esp], 17
+    call wyswietl_EAX_U2_b17
+
+    mov EAX, -1234567890
+    sub  esp, 4
+    mov  DWORD PTR [esp], 17
+    call wyswietl_EAX_U2_b17
+
+    sub  esp, 4
+    mov  DWORD PTR [esp], 17
+    call wczytaj_EAX_U2_b17
+
+    sub  esp, 4
+    mov  DWORD PTR [esp], 17
+    call wczytaj_EAX_U2_b17
+
+    push 0
+    call _ExitProcess@4
+_main ENDP
+END
